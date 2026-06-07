@@ -1,0 +1,14 @@
+node_modules/
+uploads/*
+data/*
+outputs/*
+work/
+!uploads/.gitkeep
+!data/.gitkeep
+!outputs/.gitkeep
+.env
+.env.*
+!.env.example
+npm-debug.log*
+*.log
+.DS_Store

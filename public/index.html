@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>商品库存分析</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>商品库存分析</h1>
+        <p>上传 Excel 后按款色与尺码识别库存风险、销售表现和补货处理建议。</p>
+      </div>
+      <button id="exportLink" class="export-link disabled" type="button" aria-disabled="true">导出报告</button>
+    </header>
+
+    <main>
+      <section class="upload-band">
+        <form id="uploadForm" class="upload-form">
+          <button id="fileButton" class="file-picker" type="button">选择 XLSX 文件</button>
+          <input id="fileInput" class="file-input" type="file" name="file" accept=".xlsx" />
+          <button type="submit">开始分析</button>
+          <span id="fileName" class="file-name">未选择文件</span>
+        </form>
+        <div id="jobStatus" class="job-status">等待上传</div>
+      </section>
+
+      <section id="dashboard" class="metrics-grid" aria-live="polite"></section>
+
+      <section class="workspace">
+        <nav class="tabs" aria-label="分析视图">
+          <button class="tab active" data-view="analysis">分析结果</button>
+        </nav>
+
+        <div id="filters" class="filters">
+          <input id="keywordInput" type="search" placeholder="搜索分类、款号、颜色、建议" />
+          <select id="comboSelect">
+            <option value="">全部商品</option>
+            <option value="long_broken_slow">长售龄 + 断码 + 滞销款</option>
+            <option value="long_broken_normal">长售龄 + 断码 + 平销款</option>
+            <option value="hot_broken">畅销款 + 断码</option>
+          </select>
+          <select id="issueSelect">
+            <option value="">全部单项问题</option>
+            <option value="hot_sale">畅销款</option>
+            <option value="broken_size">断码</option>
+            <option value="long_age">长售龄</option>
+            <option value="slow_sale">滞销款</option>
+            <option value="normal_sale">平销款</option>
+            <option value="low_price">低价预警</option>
+            <option value="turnover_pressure">周转压力</option>
+          </select>
+          <button id="refreshButton" type="button">刷新</button>
+        </div>
+
+        <div id="viewContent" class="view-content">
+          <div class="empty-state">上传表格后显示分析结果</div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

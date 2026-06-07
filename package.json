@@ -1,0 +1,17 @@
+{
+  "name": "vip-inventory-analyzer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Excel-based product inventory and sales analysis tool.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/src/app.js",
+    "test": "node --test server/tests/*.test.js",
+    "check": "npm test"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "multer": "^2.1.1"
+  }
+}
