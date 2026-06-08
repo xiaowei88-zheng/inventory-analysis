@@ -85,7 +85,7 @@ test("classifies hot normal and slow products within the same category", () => {
       row({ vipStyleNo: "A2", color: "Red", sales30: 70, erpStock: 5 }),
       row({ vipStyleNo: "A3", color: "Red", sales30: 50, erpStock: 5 }),
       row({ vipStyleNo: "A4", color: "Red", sales30: 20, erpStock: 5 }),
-      row({ vipStyleNo: "A5", color: "Red", sales30: 5, erpStock: 5 })
+      row({ vipStyleNo: "A5", color: "Red", sales30: 5, sales7: 0, erpStock: 20 })
     ],
     { analysisDate: "2026-06-06" }
   );
@@ -93,6 +93,39 @@ test("classifies hot normal and slow products within the same category", () => {
   assert.equal(find(result, "A1").salesTier, SALES_TIERS.HOT);
   assert.equal(find(result, "A3").salesTier, SALES_TIERS.NORMAL);
   assert.equal(find(result, "A5").salesTier, SALES_TIERS.SLOW);
+});
+
+test("protects new products from slow sale classification", () => {
+  const result = analyzeRows(
+    [
+      row({ vipStyleNo: "N1", color: "Red", firstListingDate: new Date("2026-06-02"), sales30: 0, sales7: 0, erpStock: 100 }),
+      row({ vipStyleNo: "N2", color: "Red", firstListingDate: new Date("2026-05-15"), sales30: 0, sales7: 0, erpStock: 100 }),
+      row({ vipStyleNo: "M1", color: "Red", firstListingDate: new Date("2026-05-01"), sales30: 1, sales7: 0, erpStock: 100 })
+    ],
+    { analysisDate: "2026-06-06" }
+  );
+
+  const observation = find(result, "N1");
+  assert.equal(observation.ageDays, 4);
+  assert.equal(observation.salesTier, SALES_TIERS.NORMAL);
+  assert.equal(observation.displaySalesTier, "新品");
+  assert.ok(observation.issueTags.includes("new_observation"));
+  assert.equal(observation.issueTags.includes("slow_sale"), false);
+  assert.equal(observation.issueTags.includes("turnover_pressure"), false);
+  assert.match(observation.recommendation, /新品观察期/);
+
+  const protectedNew = find(result, "N2");
+  assert.equal(protectedNew.ageDays, 22);
+  assert.equal(protectedNew.displaySalesTier, "新品");
+  assert.equal(protectedNew.issueTags.includes("new_observation"), false);
+  assert.equal(protectedNew.issueTags.includes("slow_sale"), false);
+  assert.equal(protectedNew.issueTags.includes("turnover_pressure"), false);
+  assert.match(protectedNew.recommendation, /新品保护期/);
+
+  const matureSlow = find(result, "M1");
+  assert.equal(matureSlow.ageDays, 36);
+  assert.equal(matureSlow.salesTier, SALES_TIERS.SLOW);
+  assert.ok(matureSlow.issueTags.includes("slow_sale"));
 });
 
 test("flags hot broken products and recommends core size replenishment", () => {
@@ -215,7 +248,7 @@ test("flags long-age broken slow products and low price rules", () => {
   const result = analyzeRows(
     [
       row({ category: "文胸", vipStyleNo: "S1", color: "Red", size: "75C", sales30: 1, erpStock: 0, finalPrice: 45 }),
-      row({ category: "文胸", vipStyleNo: "S1", color: "Red", size: "80C", sales30: 0, erpStock: 3, finalPrice: 45 }),
+      row({ category: "文胸", vipStyleNo: "S1", color: "Red", size: "80C", sales30: 0, erpStock: 4, finalPrice: 45 }),
       row({ category: "文胸", vipStyleNo: "S1", color: "Black", size: "75C", sales30: 50, erpStock: 5, finalPrice: 69 }),
       row({ category: "文胸", vipStyleNo: "S1", color: "Black", size: "80C", sales30: 45, erpStock: 5, finalPrice: 69 })
     ],
@@ -226,7 +259,7 @@ test("flags long-age broken slow products and low price rules", () => {
   assert.ok(product.issueTags.includes("long_age"));
   assert.ok(product.issueTags.includes("broken_size"));
   assert.ok(product.issueTags.includes("low_price"));
-  assert.ok(product.recommendation.includes("清仓"));
+  assert.ok(product.recommendation.includes("清库存"));
 });
 
 test("does not estimate zero sales amount from sales and final price", () => {

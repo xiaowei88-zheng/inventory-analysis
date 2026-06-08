@@ -9,6 +9,8 @@ import { ensureRuntimeDirs, loadJobResult, outputsDir, rootDir, saveJobResult, u
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const maxUploadBytes = parsePositiveInteger(process.env.MAX_UPLOAD_BYTES, 2 * 1024 * 1024 * 1024);
+const requestTimeoutMs = parsePositiveInteger(process.env.REQUEST_TIMEOUT_MS, 30 * 60 * 1000);
 const jobs = new Map();
 
 await ensureRuntimeDirs();
@@ -21,7 +23,7 @@ const upload = multer({
     }
   }),
   limits: {
-    fileSize: 2 * 1024 * 1024 * 1024
+    fileSize: maxUploadBytes
   },
   fileFilter: (_req, file, cb) => {
     if (/\.xlsx$/i.test(file.originalname)) {
@@ -35,6 +37,10 @@ const upload = multer({
 app.use(express.json());
 app.use(express.static(path.join(rootDir, "public")));
 app.use("/outputs", express.static(outputsDir));
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
 
 app.post("/api/import", upload.single("file"), async (req, res) => {
   if (!req.file) {
@@ -124,12 +130,17 @@ app.get("/api/export/:jobId", async (req, res, next) => {
 });
 
 app.use((error, _req, res, _next) => {
+  if (error.code === "LIMIT_FILE_SIZE") {
+    res.status(413).json({ error: `文件超过上传限制：${formatBytes(maxUploadBytes)}` });
+    return;
+  }
   res.status(500).json({ error: error.message || "服务器错误" });
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Inventory analyzer is running at http://localhost:${port}`);
 });
+server.requestTimeout = requestTimeoutMs;
 
 async function runImportJob(jobId, filePath) {
   const job = jobs.get(jobId);
@@ -209,4 +220,16 @@ function paginate(items, query) {
     total: items.length,
     items: items.slice(start, start + pageSize)
   };
+}
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function formatBytes(bytes) {
+  const gb = bytes / 1024 / 1024 / 1024;
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)}GB`;
+  const mb = bytes / 1024 / 1024;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)}MB`;
 }

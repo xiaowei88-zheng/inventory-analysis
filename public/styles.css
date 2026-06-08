@@ -1,18 +1,20 @@
 :root {
   color-scheme: light;
   font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
-  background: #f7f8f6;
-  color: #17211b;
-  --line: #d9ddd4;
-  --muted: #647067;
-  --green: #177e5c;
-  --green-weak: #e4f3eb;
+  background: #f4f6f8;
+  color: #1f2933;
+  --line: #dce3ea;
+  --muted: #667481;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --green: #15725b;
+  --green-weak: #e6f3ee;
   --amber: #b86b00;
   --amber-weak: #fff0d2;
   --red: #b83b3b;
   --red-weak: #fae6e4;
-  --blue: #1b6f9b;
-  --blue-weak: #e3f1f7;
+  --blue: #256789;
+  --blue-weak: #e7f1f6;
 }
 
 * {
@@ -29,9 +31,9 @@ body {
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  padding: 24px 32px 18px;
+  padding: 22px 32px 18px;
   border-bottom: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 h1 {
@@ -57,7 +59,8 @@ main {
   gap: 16px;
   padding: 16px;
   border: 1px solid var(--line);
-  background: #ffffff;
+  border-radius: 6px;
+  background: var(--surface);
 }
 
 .upload-form {
@@ -86,10 +89,14 @@ button.file-picker {
 
 button,
 .export-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 36px;
   padding: 0 14px;
-  border: 1px solid #17211b;
-  background: #17211b;
+  border: 1px solid #1f2933;
+  border-radius: 4px;
+  background: #1f2933;
   color: #ffffff;
   cursor: pointer;
   text-decoration: none;
@@ -118,7 +125,8 @@ button:disabled,
 
 .metric {
   border: 1px solid var(--line);
-  background: #ffffff;
+  border-radius: 6px;
+  background: var(--surface);
   padding: 14px;
 }
 
@@ -137,21 +145,23 @@ button:disabled,
 
 .workspace {
   border: 1px solid var(--line);
-  background: #ffffff;
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
 }
 
 .tabs {
   display: flex;
   gap: 2px;
   border-bottom: 1px solid var(--line);
-  background: #eef1eb;
+  background: var(--surface-soft);
 }
 
 .tab {
   border: 0;
   border-right: 1px solid var(--line);
   background: transparent;
-  color: #17211b;
+  color: #1f2933;
 }
 
 .tab.active {
@@ -162,6 +172,7 @@ button:disabled,
 
 .filters {
   display: flex;
+  align-items: center;
   gap: 10px;
   padding: 12px;
   border-bottom: 1px solid var(--line);
@@ -176,9 +187,21 @@ input,
 select {
   min-height: 36px;
   border: 1px solid var(--line);
+  border-radius: 4px;
   padding: 0 10px;
-  background: #ffffff;
-  color: #17211b;
+  background: var(--surface);
+  color: #1f2933;
+}
+
+.filter-rule {
+  position: relative;
+}
+
+.rule-button {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 500;
 }
 
 input {
@@ -216,7 +239,7 @@ th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f1f3ee;
+  background: var(--surface-soft);
   font-weight: 700;
 }
 
@@ -272,6 +295,34 @@ th {
   border-top: 1px solid var(--line);
 }
 
+.rule-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 5;
+  width: 280px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgb(31 41 51 / 0.12);
+}
+
+.rule-popover strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #1f2933;
+  font-size: 14px;
+}
+
+.rule-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 @media (max-width: 720px) {
   .app-header {
     align-items: stretch;
@@ -290,6 +341,26 @@ th {
 
   input {
     min-width: 100%;
+  }
+
+  select,
+  .rule-button,
+  .filters > button {
+    flex: 1 1 160px;
+  }
+
+  .filter-rule {
+    flex: 1 1 160px;
+  }
+
+  .filter-rule .rule-button {
+    width: 100%;
+  }
+
+  .rule-popover {
+    right: auto;
+    left: 0;
+    width: min(280px, calc(100vw - 28px));
   }
 
 }

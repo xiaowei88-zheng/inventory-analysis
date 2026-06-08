@@ -6,6 +6,27 @@ export const SALES_TIERS = {
   SLOW: "滞销款"
 };
 
+export const SLOW_SALE_RULE_DESCRIPTION =
+  "滞销款必须同时满足：上架超过30天、近7天销量为0、当前有库存且周转天数为空或大于90天；上架30天内按新品保护，不标记滞销。";
+
+const NEW_OBSERVATION_DAYS = 7;
+const NEW_PROTECTION_DAYS = 30;
+const SLOW_TURNOVER_DAYS = 90;
+
+const LISTING_STAGES = {
+  NEW_OBSERVATION: "new_observation",
+  NEW: "new",
+  MATURE: "mature",
+  UNKNOWN: "unknown"
+};
+
+const LISTING_STAGE_LABELS = {
+  [LISTING_STAGES.NEW_OBSERVATION]: "新品观察期",
+  [LISTING_STAGES.NEW]: "新品",
+  [LISTING_STAGES.MATURE]: "",
+  [LISTING_STAGES.UNKNOWN]: ""
+};
+
 const LOW_PRICE_RULES = [
   { keywords: ["文胸"], floor: 59 },
   { keywords: ["女士家居服", "睡裙"], floor: 69 },
@@ -135,7 +156,8 @@ function buildProductAnalysis(productKey, rows, styleSizes, now) {
 
   const brokenSizes = expectedSizes.filter((size) => (sizeStock.get(size) ?? 0) <= 0);
   const inStockSizes = expectedSizes.filter((size) => (sizeStock.get(size) ?? 0) > 0);
-  const ageDays = firstListingDate ? Math.floor((startOfDay(now) - startOfDay(firstListingDate)) / 86400000) : null;
+  const ageDays = firstListingDate ? Math.max(0, Math.floor((startOfDay(now) - startOfDay(firstListingDate)) / 86400000)) : null;
+  const listingStage = getListingStage(ageDays);
   const avgDailySales = sales30 / 30;
   const turnoverDays = avgDailySales > 0 ? totalStock / avgDailySales : totalStock > 0 ? null : 0;
   const finalPrice = finalPriceCount > 0 ? finalPriceSum / finalPriceCount : 0;
@@ -155,6 +177,8 @@ function buildProductAnalysis(productKey, rows, styleSizes, now) {
     image: first.image,
     firstListingDate: dateToIso(firstListingDate),
     ageDays,
+    listingStage,
+    listingStageLabel: LISTING_STAGE_LABELS[listingStage],
     skuCount: rows.length,
     totalStock,
     sales30,
@@ -180,6 +204,7 @@ function buildProductAnalysis(productKey, rows, styleSizes, now) {
     sizeStock: Object.fromEntries(Array.from(sizeStock.entries()).sort(([a], [b]) => compareSize(a, b))),
     turnoverDays: turnoverDays === null ? null : roundRatio(turnoverDays),
     salesTier: SALES_TIERS.NORMAL,
+    displaySalesTier: SALES_TIERS.NORMAL,
     replenishmentSuggestions: [],
     issueTags: [],
     recommendation: "",
@@ -192,20 +217,25 @@ function assignSalesTiers(products) {
   for (const categoryProducts of byCategory.values()) {
     const sorted = [...categoryProducts].sort((a, b) => b.sales30 - a.sales30);
     if (sorted.length === 1) {
-      sorted[0].salesTier = sorted[0].sales30 > 0 ? SALES_TIERS.HOT : SALES_TIERS.SLOW;
+      sorted[0].salesTier = sorted[0].sales30 > 0 ? SALES_TIERS.HOT : SALES_TIERS.NORMAL;
+      if (isSlowSaleCandidate(sorted[0])) {
+        sorted[0].salesTier = SALES_TIERS.SLOW;
+      }
+      sorted[0].displaySalesTier = getDisplaySalesTier(sorted[0]);
       continue;
     }
 
     const hotCount = Math.max(1, Math.ceil(sorted.length * 0.2));
-    const slowCount = Math.max(1, Math.ceil(sorted.length * 0.3));
     sorted.forEach((product, index) => {
       if (index < hotCount) {
         product.salesTier = SALES_TIERS.HOT;
-      } else if (index >= sorted.length - slowCount) {
-        product.salesTier = SALES_TIERS.SLOW;
       } else {
         product.salesTier = SALES_TIERS.NORMAL;
       }
+      if (isSlowSaleCandidate(product)) {
+        product.salesTier = SALES_TIERS.SLOW;
+      }
+      product.displaySalesTier = getDisplaySalesTier(product);
     });
   }
 }
@@ -216,22 +246,24 @@ function applyIssueTags(product) {
   const isBroken = product.brokenSizes.length > 0;
   const lowPriceFloor = getLowPriceFloor(product.category);
   const isLowPrice = lowPriceFloor !== null && product.minFinalPrice > 0 && product.minFinalPrice < lowPriceFloor;
+  const protectedNew = isNewProtected(product);
 
   if (isBroken) tags.push("broken_size");
+  if (product.listingStage === LISTING_STAGES.NEW_OBSERVATION) tags.push("new_observation");
   if (product.salesTier === SALES_TIERS.HOT) tags.push("hot_sale");
   if (product.salesTier === SALES_TIERS.NORMAL) tags.push("normal_sale");
   if (product.salesTier === SALES_TIERS.SLOW) tags.push("slow_sale");
   if (isLongAge && product.salesTier !== SALES_TIERS.HOT) tags.push("long_age");
   if (isLowPrice) tags.push("low_price");
-  if (product.turnoverDays === null || product.turnoverDays > 90) tags.push("turnover_pressure");
+  if (!protectedNew && (product.turnoverDays === null || product.turnoverDays > 90)) tags.push("turnover_pressure");
 
   product.issueTags = tags;
-  product.recommendation = buildRecommendation(product, { isLongAge, isBroken, isLowPrice, lowPriceFloor });
+  product.recommendation = buildRecommendation(product, { isLongAge, isBroken, isLowPrice, lowPriceFloor, protectedNew });
   product.priorityScore = buildPriorityScore(product);
 }
 
 function buildRecommendation(product, context) {
-  const { isLongAge, isBroken, isLowPrice, lowPriceFloor } = context;
+  const { isLongAge, isBroken, isLowPrice, lowPriceFloor, protectedNew } = context;
 
   if (product.salesTier === SALES_TIERS.HOT && isBroken) {
     const urgency = product.turnoverDays !== null && product.turnoverDays < 15 ? "紧急补核心尺码" : "补核心尺码";
@@ -239,12 +271,20 @@ function buildRecommendation(product, context) {
     return `${urgency}，优先处理销售金额高、断码比例高的尺码${profitHint}`;
   }
 
+  if (product.listingStage === LISTING_STAGES.NEW_OBSERVATION) {
+    return "新品观察期，暂不做滞销处理；重点观察曝光、点击、加购和首批销量";
+  }
+
+  if (protectedNew) {
+    return "新品保护期，暂不做滞销处理；继续观察近7天销量和尺码库存结构";
+  }
+
   if (isLongAge && isBroken && product.salesTier === SALES_TIERS.SLOW) {
-    return "不建议补码，优先清仓、组合促销或降库存风险";
+    return "不建议补码，优先清库存、组合促销或降低库存风险";
   }
 
   if (isLongAge && isBroken && product.salesTier === SALES_TIERS.NORMAL) {
-    return "只补核心尺码；若周转差或毛利差，转清仓处理";
+    return "只补核心尺码；若周转差或毛利差，转清库存处理";
   }
 
   if (isLowPrice) {
@@ -252,7 +292,7 @@ function buildRecommendation(product, context) {
   }
 
   if (product.turnoverDays === null || product.turnoverDays > 90) {
-    return "库存周转压力高，优先检查促销、调价或清仓方案";
+    return "库存压力高，优先检查促销、调价或清库存方案";
   }
 
   return "保持观察";
@@ -322,6 +362,7 @@ function buildDashboard(products) {
     totalStock,
     sales30,
     salesAmount30: roundMoney(sum(products, "salesAmount30")),
+    slowSaleRuleDescription: SLOW_SALE_RULE_DESCRIPTION,
     inventoryTurnoverMonths: sales30 > 0 ? roundRatio(totalStock / sales30) : null,
     longAgeCount: count(products, (product) => product.issueTags.includes("long_age")),
     brokenSizeCount: count(products, (product) => product.issueTags.includes("broken_size")),
@@ -340,7 +381,7 @@ function buildFilterStats(products, total) {
       product.issueTags.includes("long_age") && product.issueTags.includes("broken_size") && product.issueTags.includes("normal_sale"),
     hot_broken: (product) => product.issueTags.includes("hot_sale") && product.issueTags.includes("broken_size")
   };
-  const issueKeys = ["hot_sale", "broken_size", "long_age", "slow_sale", "normal_sale", "low_price", "turnover_pressure"];
+  const issueKeys = ["hot_sale", "broken_size", "long_age", "slow_sale", "normal_sale", "new_observation", "low_price", "turnover_pressure"];
 
   return {
     total: stat(total, total),
@@ -419,6 +460,28 @@ function makePriceBand(price) {
 
 function makeProductKey(vipStyleNo, color) {
   return `${vipStyleNo}::${color}`;
+}
+
+function getListingStage(ageDays) {
+  if (ageDays === null) return LISTING_STAGES.UNKNOWN;
+  if (ageDays <= NEW_OBSERVATION_DAYS) return LISTING_STAGES.NEW_OBSERVATION;
+  if (ageDays <= NEW_PROTECTION_DAYS) return LISTING_STAGES.NEW;
+  return LISTING_STAGES.MATURE;
+}
+
+function getDisplaySalesTier(product) {
+  return isNewProtected(product) ? "新品" : product.salesTier;
+}
+
+function isNewProtected(product) {
+  return [LISTING_STAGES.NEW_OBSERVATION, LISTING_STAGES.NEW].includes(product.listingStage);
+}
+
+function isSlowSaleCandidate(product) {
+  const isListedOver30Days = product.ageDays !== null && product.ageDays > NEW_PROTECTION_DAYS;
+  const isLowRecentSales = product.sales7 <= 0;
+  const isHighInventory = product.totalStock > 0 && (product.turnoverDays === null || product.turnoverDays > SLOW_TURNOVER_DAYS);
+  return isListedOver30Days && isLowRecentSales && isHighInventory;
 }
 
 function groupBy(items, getKey) {

@@ -49,8 +49,20 @@
             <option value="slow_sale">滞销款</option>
             <option value="normal_sale">平销款</option>
             <option value="low_price">低价预警</option>
-            <option value="turnover_pressure">周转压力</option>
+            <option value="turnover_pressure">库存压力</option>
           </select>
+          <div class="filter-rule">
+            <button class="rule-button" type="button" data-rule-trigger aria-controls="slowSaleRulePanel" aria-expanded="false">滞销规则</button>
+            <div id="slowSaleRulePanel" class="rule-popover hidden">
+              <strong>滞销款判定规则</strong>
+              <ul class="rule-list">
+                <li>上架超过30天</li>
+                <li>近7天销量低</li>
+                <li>当前库存高</li>
+                <li>新品30天保护期内不标记滞销</li>
+              </ul>
+            </div>
+          </div>
           <button id="refreshButton" type="button">刷新</button>
         </div>
 

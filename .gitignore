@@ -3,6 +3,7 @@ uploads/*
 data/*
 outputs/*
 work/
+runtime/
 !uploads/.gitkeep
 !data/.gitkeep
 !outputs/.gitkeep

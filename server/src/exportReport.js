@@ -6,8 +6,9 @@ const ISSUE_LABELS = {
   hot_sale: "畅销款",
   normal_sale: "平销款",
   slow_sale: "滞销款",
+  new_observation: "新品观察期",
   low_price: "低价预警",
-  turnover_pressure: "周转压力"
+  turnover_pressure: "库存压力"
 };
 
 const COMBO_LABELS = {
@@ -29,7 +30,7 @@ export async function createExportWorkbook(result) {
 function addSummarySheet(workbook, dashboard) {
   const sheet = workbook.addWorksheet("总览");
   sheet.addRow(["商品库存分析"]);
-  sheet.addRow([]);
+  sheet.addRow(["滞销规则", dashboard.slowSaleRuleDescription ?? ""]);
 
   const metrics = [
     ["款号数", dashboard.styleCount],
@@ -41,7 +42,7 @@ function addSummarySheet(workbook, dashboard) {
     ["断码款色数", dashboard.brokenSizeCount],
     ["畅销断码款色数", dashboard.hotBrokenCount],
     ["低价预警款色数", dashboard.lowPriceCount],
-    ["周转压力款色数", dashboard.turnoverPressureCount],
+    ["库存压力款色数", dashboard.turnoverPressureCount],
     ["总库存周转月数", dashboard.inventoryTurnoverMonths ?? ""]
   ];
 
@@ -130,7 +131,7 @@ function productColumns() {
 
 function toProductRows(product) {
   const pairs = product.sizeBarcodePairs ?? [];
-  const baseRow = { ...product };
+  const baseRow = { ...product, salesTier: product.displaySalesTier ?? product.salesTier };
 
   const skuRows = pairs.flatMap((pair) =>
     pair.barcodes.length
@@ -174,12 +175,14 @@ function buildSkuExportFields(product, size, barcode) {
 }
 
 function buildSkuIssueTags(product, sku) {
-  const labels = [product.salesTier];
+  const isNewProduct = (product.displaySalesTier ?? product.salesTier) === "新品";
+  const labels = [product.displaySalesTier ?? product.salesTier];
+  if (product.issueTags.includes("new_observation")) labels.push(ISSUE_LABELS.new_observation);
   if (sku.isBroken) labels.push("当前尺码断码");
   if (sku.suggestion) labels.push("建议补货");
-  if (sku.turnoverDays !== "" && sku.turnoverDays < 30) labels.push("周转小于30天");
-  if (sku.turnoverDays !== "" && sku.turnoverDays > 90) labels.push("周转偏慢");
-  if (!sku.sales30) labels.push("近30天无销量");
+  if (!isNewProduct && sku.turnoverDays !== "" && sku.turnoverDays < 30) labels.push("周转小于30天");
+  if (!isNewProduct && sku.turnoverDays !== "" && sku.turnoverDays > 90) labels.push("库存消化慢");
+  if (!isNewProduct && !sku.sales30) labels.push("近30天无销量");
   if (product.issueTags.includes("low_price")) labels.push(ISSUE_LABELS.low_price);
   if (product.issueTags.includes("long_age")) labels.push(ISSUE_LABELS.long_age);
   return [...new Set(labels.filter(Boolean))].join(", ");
@@ -191,15 +194,23 @@ function buildSkuRecommendation(product, sku) {
   }
 
   const profitHint = product.issueTags.includes("low_price") ? "；价格低于底线，补货前先检查利润空间" : "";
+  const isNewProduct = (product.displaySalesTier ?? product.salesTier) === "新品";
 
   if (product.issueTags.includes("slow_sale")) {
     if (sku.isBroken) {
-      return "当前尺码断码，滞销款不建议补货，优先清仓、组合促销或降低库存风险";
+      return "当前尺码断码，但属于滞销款，不建议补货；优先清库存、组合促销或调整价格";
     }
     if (!sku.sales30 || sku.turnoverDays === "" || sku.turnoverDays > 90) {
-      return "当前尺码周转慢，优先促销、调价或清库存";
+      return "当前尺码库存消化慢，优先清库存、组合促销或调整价格";
     }
     return "滞销款不建议补货，保持观察";
+  }
+
+  if (isNewProduct && !sku.suggestion) {
+    if (product.issueTags.includes("new_observation")) {
+      return "新品观察期，暂不按滞销处理，先看曝光、点击和首批销量";
+    }
+    return "新品保护期，暂不按滞销处理，持续观察近7天销量和库存结构";
   }
 
   if (sku.suggestion) {
@@ -216,7 +227,7 @@ function buildSkuRecommendation(product, sku) {
   }
 
   if (sku.turnoverDays !== "" && sku.turnoverDays > 90) {
-    return "当前尺码周转偏慢，优先消化库存";
+    return "当前尺码库存消化慢，优先清库存或调整促销节奏";
   }
 
   return "当前尺码库存暂可观察";

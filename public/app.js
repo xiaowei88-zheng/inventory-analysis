@@ -13,8 +13,9 @@ const issueLabels = {
   long_age: "长售龄",
   slow_sale: "滞销款",
   normal_sale: "平销款",
+  new_observation: "新品观察期",
   low_price: "低价预警",
-  turnover_pressure: "周转压力"
+  turnover_pressure: "库存压力"
 };
 
 const comboLabels = {
@@ -33,7 +34,7 @@ const dashboardFields = [
   ["brokenSizeCount", "断码款色数"],
   ["hotBrokenCount", "畅销断码款色数"],
   ["lowPriceCount", "低价预警款色数"],
-  ["turnoverPressureCount", "周转压力款色数"],
+  ["turnoverPressureCount", "库存压力款色数"],
   ["inventoryTurnoverMonths", "总库存周转月数"]
 ];
 
@@ -49,6 +50,8 @@ const keywordInput = document.querySelector("#keywordInput");
 const comboSelect = document.querySelector("#comboSelect");
 const issueSelect = document.querySelector("#issueSelect");
 const filters = document.querySelector("#filters");
+const slowSaleRulePanel = document.querySelector("#slowSaleRulePanel");
+const ruleTrigger = document.querySelector("[data-rule-trigger]");
 
 fileButton.addEventListener("click", () => {
   fileInput.click();
@@ -103,6 +106,23 @@ document.querySelectorAll(".tab").forEach((button) => {
 document.querySelector("#refreshButton").addEventListener("click", () => {
   state.page = 1;
   loadCurrentView();
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-rule-trigger]")) {
+    toggleSlowSaleRule();
+    return;
+  }
+
+  if (!event.target.closest(".filter-rule")) {
+    closeSlowSaleRule();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !slowSaleRulePanel.classList.contains("hidden")) {
+    closeSlowSaleRule();
+  }
 });
 
 [keywordInput, comboSelect, issueSelect].forEach((control) => {
@@ -307,7 +327,7 @@ function renderProductRow(product, size, barcode) {
       <td>${escapeHtml(barcode)}</td>
       <td>${escapeHtml(size)}</td>
       <td>${product.ageDays ?? "-"} 天<br>${escapeHtml(product.firstListingDate || "")}</td>
-      <td>${escapeHtml(product.salesTier)}</td>
+      <td>${escapeHtml(product.displaySalesTier || product.salesTier)}</td>
       <td>${formatNumber(sizeSales30)} 件<br>${formatMoney(sizeSalesAmount30)}</td>
       <td>${formatNumber(sizeStock)} 件<br>${sizeTurnoverDays === null ? "无销量" : `${sizeTurnoverDays} 天`}</td>
       <td>${isBrokenSize ? escapeHtml(size) : "无"}</td>
@@ -323,12 +343,14 @@ function renderProductRow(product, size, barcode) {
 }
 
 function buildSizeIssueTags(product, sku) {
-  const tags = [product.salesTier];
+  const isNewProduct = (product.displaySalesTier || product.salesTier) === "新品";
+  const tags = [product.displaySalesTier || product.salesTier];
+  if (product.issueTags.includes("new_observation")) tags.push("new_observation");
   if (sku.isBroken) tags.push("当前尺码断码");
   if (sku.suggestion) tags.push("建议补货");
-  if (sku.turnoverDays !== null && sku.turnoverDays < 30) tags.push("周转小于30天");
-  if (sku.turnoverDays !== null && sku.turnoverDays > 90) tags.push("周转偏慢");
-  if (!sku.sales30) tags.push("近30天无销量");
+  if (!isNewProduct && sku.turnoverDays !== null && sku.turnoverDays < 30) tags.push("周转小于30天");
+  if (!isNewProduct && sku.turnoverDays !== null && sku.turnoverDays > 90) tags.push("库存消化慢");
+  if (!isNewProduct && !sku.sales30) tags.push("近30天无销量");
   if (product.issueTags.includes("low_price")) tags.push("low_price");
   if (product.issueTags.includes("long_age")) tags.push("long_age");
   return [...new Set(tags.filter(Boolean))];
@@ -340,15 +362,23 @@ function buildSizeRecommendation(product, sku) {
   }
 
   const profitHint = product.issueTags.includes("low_price") ? "；价格低于底线，补货前先检查利润空间" : "";
+  const isNewProduct = (product.displaySalesTier || product.salesTier) === "新品";
 
   if (product.issueTags.includes("slow_sale")) {
     if (sku.isBroken) {
-      return "当前尺码断码，滞销款不建议补货，优先清仓、组合促销或降低库存风险";
+      return "当前尺码断码，但属于滞销款，不建议补货；优先清库存、组合促销或调整价格";
     }
     if (!sku.sales30 || sku.turnoverDays === null || sku.turnoverDays > 90) {
-      return "当前尺码周转慢，优先促销、调价或清库存";
+      return "当前尺码库存消化慢，优先清库存、组合促销或调整价格";
     }
     return "滞销款不建议补货，保持观察";
+  }
+
+  if (isNewProduct && !sku.suggestion) {
+    if (product.issueTags.includes("new_observation")) {
+      return "新品观察期，暂不按滞销处理，先看曝光、点击和首批销量";
+    }
+    return "新品保护期，暂不按滞销处理，持续观察近7天销量和库存结构";
   }
 
   if (sku.suggestion) {
@@ -365,7 +395,7 @@ function buildSizeRecommendation(product, sku) {
   }
 
   if (sku.turnoverDays !== null && sku.turnoverDays > 90) {
-    return "当前尺码周转偏慢，优先消化库存";
+    return "当前尺码库存消化慢，优先清库存或调整促销节奏";
   }
 
   return "当前尺码库存暂可观察";
@@ -373,7 +403,7 @@ function buildSizeRecommendation(product, sku) {
 
 function renderTag(tag) {
   const label = issueLabels[tag] ?? tag;
-  const cls = tag === "low_price" || tag === "turnover_pressure" || tag === "周转偏慢" ? "warn" : tag === "broken_size" || tag === "当前尺码断码" ? "danger" : "";
+  const cls = tag === "low_price" || tag === "turnover_pressure" || tag === "库存消化慢" ? "warn" : tag === "broken_size" || tag === "当前尺码断码" ? "danger" : "";
   return `<span class="tag ${cls}">${label}</span>`;
 }
 
@@ -397,6 +427,17 @@ function bindPager() {
     state.page += 1;
     loadCurrentView();
   });
+}
+
+function toggleSlowSaleRule() {
+  const shouldOpen = slowSaleRulePanel.classList.contains("hidden");
+  slowSaleRulePanel.classList.toggle("hidden", !shouldOpen);
+  ruleTrigger.setAttribute("aria-expanded", String(shouldOpen));
+}
+
+function closeSlowSaleRule() {
+  slowSaleRulePanel.classList.add("hidden");
+  ruleTrigger.setAttribute("aria-expanded", "false");
 }
 
 function updateFilterLabels() {
@@ -429,7 +470,8 @@ function formatNumber(value) {
 }
 
 function formatDashboardValue(value) {
-  return value === null || value === undefined ? "-" : formatNumber(value);
+  if (value === null || value === undefined) return "-";
+  return typeof value === "number" ? formatNumber(value) : escapeHtml(String(value));
 }
 
 function formatMoney(value) {

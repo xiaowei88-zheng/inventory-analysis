@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 export const rootDir = process.cwd();
-export const uploadDir = path.join(rootDir, "uploads");
-export const dataDir = path.join(rootDir, "data");
-export const outputsDir = path.join(rootDir, "outputs");
+export const runtimeDir = path.resolve(process.env.RUNTIME_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || rootDir);
+export const uploadDir = path.join(runtimeDir, "uploads");
+export const dataDir = path.join(runtimeDir, "data");
+export const outputsDir = path.join(runtimeDir, "outputs");
 
 export async function ensureRuntimeDirs() {
   await fs.mkdir(uploadDir, { recursive: true });

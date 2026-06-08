@@ -20,13 +20,15 @@ test("exports summary sheet before product analysis sheet with sku rows", async 
 
   const summary = workbook.getWorksheet("总览");
   assert.equal(summary.getCell("A1").value, "商品库存分析");
+  assert.equal(summary.getCell("A2").value, "滞销规则");
+  assert.match(summary.getCell("B2").value, /上架超过30天/);
   assert.equal(summary.getCell("A3").value, "款号数");
   assert.equal(summary.getCell("B3").value, 1);
   assert.equal(summary.getCell("E4").value, "长售龄款色数");
   assert.equal(summary.getCell("A5").value, "断码款色数");
   assert.equal(summary.getCell("C5").value, "畅销断码款色数");
   assert.equal(summary.getCell("E5").value, "低价预警款色数");
-  assert.equal(summary.getCell("A6").value, "周转压力款色数");
+  assert.equal(summary.getCell("A6").value, "库存压力款色数");
   assert.equal(summary.getCell("C6").value, "总库存周转月数");
   assert.equal(summary.getCell("A8").value, "组合筛选");
   assert.equal(summary.getCell("A9").value, "全部商品");
@@ -77,6 +79,33 @@ test("exports summary sheet before product analysis sheet with sku rows", async 
   assert.match(products.getCell("T2").value, /当前尺码断码/);
   assert.match(products.getCell("U2").value, /当前尺码/);
   assert.equal(products.getRow(2).alignment.wrapText, false);
+});
+
+test("exports new products as new instead of slow sale", async () => {
+  const result = analyzeRows(
+    [
+      row({
+        vipStyleNo: "N1",
+        firstListingDate: new Date("2026-06-02"),
+        sales30: 0,
+        sales7: 0,
+        erpStock: 100
+      })
+    ],
+    { analysisDate: "2026-06-06" }
+  );
+
+  const workbook = await createExportWorkbook(result);
+  const products = workbook.getWorksheet("商品分析");
+  assert.equal(products.getCell("H2").value, 4);
+  assert.equal(products.getCell("I2").value, "新品");
+  assert.match(products.getCell("T2").value, /新品观察期/);
+  assert.doesNotMatch(products.getCell("I2").value, /滞销款/);
+  assert.doesNotMatch(products.getCell("T2").value, /滞销款/);
+  assert.doesNotMatch(products.getCell("T2").value, /近30天无销量/);
+  assert.doesNotMatch(products.getCell("T2").value, /库存消化慢/);
+  assert.doesNotMatch(products.getCell("U2").value, /滞销款/);
+  assert.match(products.getCell("U2").value, /新品观察期/);
 });
 
 function row(overrides = {}) {
