@@ -1,30 +1,21 @@
+import { readInventoryFile } from "./src/utils/excel.js";
+import { analyzeInventory } from "./src/utils/inventoryAnalysis.js";
+import { exportAnalysisWorkbook } from "./src/utils/exportWorkbook.js";
+
 const state = {
-  jobId: "",
-  view: "analysis",
+  file: null,
+  parsed: null,
+  result: null,
+  keyword: "",
+  combo: "",
+  issue: "",
   page: 1,
-  pageSize: 50,
-  lastPageTotal: 0,
-  filterStats: null
+  pageSize: 50
 };
 
-const issueLabels = {
-  hot_sale: "畅销款",
-  broken_size: "断码",
-  long_age: "长售龄",
-  slow_sale: "滞销款",
-  normal_sale: "平销款",
-  new_observation: "新品观察期",
-  low_price: "低价预警",
-  turnover_pressure: "库存压力"
-};
+const BLOCKED_CALCULATION_TEXT = "缺少近30天销量字段，无法计算";
 
-const comboLabels = {
-  long_broken_slow: "长售龄 + 断码 + 滞销款",
-  long_broken_normal: "长售龄 + 断码 + 平销款",
-  hot_broken: "畅销款 + 断码"
-};
-
-const dashboardFields = [
+const metricFields = [
   ["styleCount", "款号数"],
   ["productCount", "商品款色数"],
   ["totalStock", "总库存"],
@@ -38,218 +29,218 @@ const dashboardFields = [
   ["inventoryTurnoverMonths", "总库存周转月数"]
 ];
 
-const uploadForm = document.querySelector("#uploadForm");
+const comboFilters = {
+  long_broken_slow: "长售龄 + 断码 + 滞销款",
+  long_broken_normal: "长售龄 + 断码 + 平销款",
+  hot_broken: "畅销款 + 断码"
+};
+
+const issueFilters = {
+  hot_sale: "畅销款",
+  broken_size: "断码",
+  long_age: "长售龄",
+  slow_sale: "滞销款",
+  normal_sale: "平销款",
+  new_product: "新品",
+  low_price: "低价预警",
+  turnover_pressure: "库存压力"
+};
+
 const fileButton = document.querySelector("#fileButton");
 const fileInput = document.querySelector("#fileInput");
 const fileName = document.querySelector("#fileName");
 const jobStatus = document.querySelector("#jobStatus");
 const dashboard = document.querySelector("#dashboard");
-const exportLink = document.querySelector("#exportLink");
+const exportButton = document.querySelector("#exportButton");
+const validationPanel = document.querySelector("#validationPanel");
+const warningPanel = document.querySelector("#warningPanel");
+const categoryPanel = document.querySelector("#categoryPanel");
 const viewContent = document.querySelector("#viewContent");
 const keywordInput = document.querySelector("#keywordInput");
 const comboSelect = document.querySelector("#comboSelect");
 const issueSelect = document.querySelector("#issueSelect");
-const filters = document.querySelector("#filters");
+const refreshButton = document.querySelector("#refreshButton");
 const slowSaleRulePanel = document.querySelector("#slowSaleRulePanel");
 const ruleTrigger = document.querySelector("[data-rule-trigger]");
 
-fileButton.addEventListener("click", () => {
-  fileInput.click();
-});
+fileButton.addEventListener("click", () => fileInput.click());
 
-fileInput.addEventListener("change", () => {
-  fileName.textContent = fileInput.files[0]?.name ?? "未选择文件";
-});
-
-uploadForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!fileInput.files[0]) {
-    setStatus("请先选择 .xlsx 文件");
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
-  setStatus("正在上传文件");
-
-  const response = await fetch("/api/import", { method: "POST", body: formData });
-  const payload = await response.json();
-  if (!response.ok) {
-    setStatus(payload.error || "上传失败");
-    return;
-  }
-
-  state.jobId = payload.jobId;
-  disableExport();
-  pollJob();
-});
-
-exportLink.addEventListener("click", (event) => {
-  event.preventDefault();
-  if (exportLink.getAttribute("aria-disabled") === "true") {
-    setStatus("请先上传并完成分析后再导出");
-    return;
-  }
-  exportCurrentReport();
-});
-
-document.querySelectorAll(".tab").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
-    button.classList.add("active");
-    state.view = button.dataset.view;
-    state.page = 1;
-    loadCurrentView();
-  });
-});
-
-document.querySelector("#refreshButton").addEventListener("click", () => {
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  state.file = file;
   state.page = 1;
-  loadCurrentView();
+  fileName.textContent = file.name;
+  await runLocalAnalysis(file);
+});
+
+exportButton.addEventListener("click", () => {
+  if (!state.result) {
+    setStatus("请先上传并完成本地分析");
+    return;
+  }
+  exportAnalysisWorkbook(state.result);
+  setStatus("分析结果已在浏览器本地导出");
+});
+
+keywordInput.addEventListener("input", () => {
+  state.keyword = keywordInput.value.trim().toLowerCase();
+  state.page = 1;
+  renderCurrentView();
+});
+
+comboSelect.addEventListener("change", () => {
+  state.combo = comboSelect.value;
+  state.page = 1;
+  renderCurrentView();
+});
+
+issueSelect.addEventListener("change", () => {
+  state.issue = issueSelect.value;
+  state.page = 1;
+  renderCurrentView();
+});
+
+refreshButton.addEventListener("click", () => {
+  state.page = 1;
+  if (state.result) renderAll();
+});
+
+ruleTrigger.addEventListener("click", () => {
+  const shouldOpen = slowSaleRulePanel.classList.contains("hidden");
+  slowSaleRulePanel.classList.toggle("hidden", !shouldOpen);
+  ruleTrigger.setAttribute("aria-expanded", String(shouldOpen));
 });
 
 document.addEventListener("click", (event) => {
-  if (event.target.closest("[data-rule-trigger]")) {
-    toggleSlowSaleRule();
-    return;
-  }
-
   if (!event.target.closest(".filter-rule")) {
-    closeSlowSaleRule();
+    slowSaleRulePanel.classList.add("hidden");
+    ruleTrigger.setAttribute("aria-expanded", "false");
   }
 });
 
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !slowSaleRulePanel.classList.contains("hidden")) {
-    closeSlowSaleRule();
-  }
-});
-
-[keywordInput, comboSelect, issueSelect].forEach((control) => {
-  control.addEventListener("change", () => {
-    state.page = 1;
-    loadCurrentView();
-  });
-});
-
-keywordInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    state.page = 1;
-    loadCurrentView();
-  }
-});
-
-async function pollJob() {
-  const response = await fetch(`/api/jobs/${state.jobId}`);
-  const job = await response.json();
-  if (!response.ok) {
-    setStatus(job.error || "任务查询失败");
-    return;
-  }
-
-  setStatus(`${job.message}；已处理 ${job.processedRows ?? 0} 行`);
-  if (job.status === "done") {
-    setStatus(`分析完成；导入 ${job.importedRows} 行`);
-    enableExport(state.jobId);
-    await loadDashboard();
-    await loadCurrentView();
-    return;
-  }
-  if (job.status === "failed") {
-    setStatus(job.error || "分析失败");
-    return;
-  }
-
-  window.setTimeout(pollJob, 1200);
-}
-
-function enableExport(jobId) {
-  exportLink.dataset.jobId = jobId;
-  exportLink.classList.remove("disabled");
-  exportLink.setAttribute("aria-disabled", "false");
-  exportLink.textContent = "导出报告";
-}
-
-function disableExport() {
-  delete exportLink.dataset.jobId;
-  exportLink.classList.add("disabled");
-  exportLink.setAttribute("aria-disabled", "true");
-  exportLink.textContent = "导出报告";
-}
-
-async function exportCurrentReport() {
-  const jobId = exportLink.dataset.jobId || state.jobId;
-  if (!jobId) {
-    setStatus("请先上传并完成分析后再导出");
-    return;
-  }
-
+async function runLocalAnalysis(file) {
   try {
-    exportLink.textContent = "正在导出...";
-    exportLink.setAttribute("aria-busy", "true");
-    const response = await fetch(`/api/export/${jobId}`);
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || "导出失败");
-    }
-
-    const blob = await response.blob();
-    const outputUrl = response.headers.get("X-Output-Url") || "";
-    const outputName = outputUrl ? decodeURIComponent(outputUrl.split("/").pop() || "") : "";
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `商品库存分析-${jobId}.xlsx`;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    setStatus(outputName ? `报告已导出并保存到 outputs/${outputName}` : "报告已导出");
+    setStatus("正在浏览器本地读取 Excel");
+    disableExport();
+    const parsed = await readInventoryFile(file);
+    setStatus("正在本地识别字段并计算库存指标");
+    const result = analyzeInventory(parsed.rows, parsed.fieldMap);
+    state.parsed = parsed;
+    state.result = result;
+    renderAll();
+    enableExport();
+    setStatus(`本地分析完成：读取 ${parsed.meta.totalRows} 行，导入 ${parsed.meta.importedRows} 行。数据未上传服务器。`);
   } catch (error) {
-    setStatus(error.message || "导出失败");
-  } finally {
-    exportLink.textContent = "导出报告";
-    exportLink.removeAttribute("aria-busy");
+    state.parsed = null;
+    state.result = null;
+    renderEmpty(error.message || "分析失败");
+    disableExport();
+    setStatus(error.message || "分析失败");
   }
 }
 
-async function loadDashboard() {
-  if (!state.jobId) return;
-  const response = await fetch(`/api/dashboard/${state.jobId}`);
-  const payload = await response.json();
-  if (!response.ok) {
-    setStatus(payload.error || "读取看板失败");
-    return;
-  }
+function renderAll() {
+  renderDashboard();
+  validationPanel.innerHTML = "";
+  warningPanel.innerHTML = "";
+  renderCategories();
+  renderCurrentView();
+}
 
-  dashboard.innerHTML = dashboardFields
-    .map(([key, label]) => `<div class="metric"><span>${label}</span><strong>${formatDashboardValue(payload.dashboard[key])}</strong></div>`)
+function renderDashboard() {
+  dashboard.innerHTML = metricFields
+    .map(
+      ([key, label]) =>
+        `<div class="metric metric-${key}"><span>${label}</span><strong title="${escapeHtml(formatMetric(state.result.dashboard[key], key))}">${formatMetric(state.result.dashboard[key], key)}</strong></div>`
+    )
     .join("");
-  state.filterStats = payload.dashboard.filterStats;
-  updateFilterLabels();
 }
 
-async function loadCurrentView() {
-  if (!state.jobId) return;
-  await loadProductTable();
+function renderValidation() {
+  const validation = state.result.validation;
+  validationPanel.innerHTML = `
+    <div class="section-title">
+      <h2>数据校验</h2>
+      <span>${formatNumber(validation.importedRows)} 行标准化数据</span>
+    </div>
+    <div class="validation-grid">
+      ${validation.messages.map((message) => `<div class="validation-item">${escapeHtml(message)}</div>`).join("")}
+    </div>
+    <div class="core-field-list">
+      ${validation.coreFieldStatus
+        .map(
+          (field) =>
+            `<span class="field-status ${field.matched ? "ok" : "missing"}">${escapeHtml(field.label)} ${field.matched ? "✅" : "❌"}</span>`
+        )
+        .join("")}
+    </div>
+    <div class="field-list">
+      ${validation.matchedFields.map((field) => `<span class="tag">${escapeHtml(field)}</span>`).join("")}
+    </div>
+  `;
 }
 
-async function loadProductTable() {
-  const query = new URLSearchParams({
-    page: String(state.page),
-    pageSize: String(state.pageSize),
-    keyword: keywordInput.value.trim(),
-    combo: comboSelect.value,
-    issue: issueSelect.value
-  });
-  const response = await fetch(`/api/products/${state.jobId}?${query}`);
-  const payload = await response.json();
-  if (!response.ok) {
-    setStatus(payload.error || "读取数据失败");
-    return;
-  }
-  state.lastPageTotal = payload.total;
+function renderWarnings() {
+  const warnings = state.result.warnings.slice(0, 8);
+  warningPanel.innerHTML = `
+    <div class="section-title">
+      <h2>库存预警</h2>
+      <span>优先显示风险最高的商品</span>
+    </div>
+    <div class="warning-list">
+      ${warnings.length ? warnings.map(renderWarningItem).join("") : `<div class="empty-state compact">暂无库存预警</div>`}
+    </div>
+  `;
+}
+
+function renderWarningItem(item) {
+  return `
+    <div class="warning-item">
+      <strong>${escapeHtml(item.productName || item.sku || item.styleNo || "未命名商品")}</strong>
+      <span>${escapeHtml(item.category)} · 可售 ${formatNumber(item.availableStock)} · 近30天 ${formatOptionalNumber(item.sales30)}</span>
+      <div class="tag-list">${item.issueTags.map((tag) => `<span class="tag warn">${escapeHtml(tag)}</span>`).join("")}</div>
+    </div>
+  `;
+}
+
+function renderCategories() {
+  const rows = state.result.categoryAnalysis.slice(0, 8);
+  categoryPanel.innerHTML = `
+    <div class="section-title">
+      <h2>分类库存分析</h2>
+      <span>按可售库存排序</span>
+    </div>
+    <div class="mini-table">
+      <table>
+        <thead>
+          <tr><th>分类</th><th>商品数</th><th>可售库存</th><th>可售天数</th><th>滞销</th></tr>
+        </thead>
+        <tbody>${rows.map(renderCategoryRow).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderCategoryRow(item) {
+  return `
+    <tr>
+      <td>${escapeHtml(item.category)}</td>
+      <td>${formatNumber(item.productCount)}</td>
+      <td>${formatNumber(item.availableStock)}</td>
+      <td>${formatSellableDays(item.sellableDays)}</td>
+      <td>${formatNumber(item.slowSaleCount)}</td>
+    </tr>
+  `;
+}
+
+function renderCurrentView() {
+  if (!state.result) return;
+  const filtered = filterItems(state.result.items);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / state.pageSize));
+  state.page = Math.min(state.page, pageCount);
+  const start = (state.page - 1) * state.pageSize;
+  const pageItems = filtered.slice(start, start + state.pageSize);
 
   viewContent.innerHTML = `
     <table>
@@ -276,144 +267,99 @@ async function loadProductTable() {
           <th>建议动作</th>
         </tr>
       </thead>
-      <tbody>${payload.items.flatMap(renderProductRows).join("")}</tbody>
+      <tbody>${pageItems.map(renderItemRow).join("")}</tbody>
     </table>
-    ${renderPager(payload)}
+    ${renderPager(filtered.length, pageCount)}
   `;
   bindPager();
 }
 
-function renderProductRows(product) {
-  const pairs = product.sizeBarcodePairs ?? [];
-  const skuRows = pairs.flatMap((pair) =>
-    pair.barcodes.length
-      ? pair.barcodes.map((barcode) => renderProductRow(product, pair.size, barcode))
-      : [renderProductRow(product, pair.size, "")]
-  );
-  return skuRows.length ? skuRows : [renderProductRow(product, "", "")];
-}
-
-function renderProductRow(product, size, barcode) {
-  const img = product.image ? `<img class="thumbnail" src="${escapeHtml(product.image)}" alt="">` : `<div class="thumbnail"></div>`;
-  const sizeStock = Number(product.sizeStock?.[size]) || 0;
-  const sizeSales30 = Number(product.sizeSales30?.[size]) || 0;
-  const sizeSalesAmount30 = Number(product.sizeSalesAmount30?.[size]) || 0;
-  const sizeTurnoverDays = sizeSales30 > 0 ? Math.round((sizeStock / (sizeSales30 / 30)) * 100) / 100 : null;
-  const sizeCostPrice = Number(product.sizeCostPrice?.[size]) || 0;
-  const sizeFinalPrice = Number(product.sizeFinalPrice?.[size]) || product.minFinalPrice;
-  const isBrokenSize = Boolean(size) && sizeStock <= 0;
-  const suggestion = (product.replenishmentSuggestions ?? []).find((item) => item.size === size);
-  const issueTags = buildSizeIssueTags(product, {
-    sales30: sizeSales30,
-    turnoverDays: sizeTurnoverDays,
-    isBroken: isBrokenSize,
-    suggestion
-  });
-  const recommendation = buildSizeRecommendation(product, {
-    size,
-    sales30: sizeSales30,
-    stock: sizeStock,
-    turnoverDays: sizeTurnoverDays,
-    isBroken: isBrokenSize,
-    suggestion
-  });
+function renderItemRow(item) {
+  const image = item.image ? `<img class="thumbnail" src="${escapeHtml(item.image)}" alt="">` : `<div class="thumbnail"></div>`;
   return `
     <tr>
-      <td>${img}</td>
-      <td>${escapeHtml(product.category)}</td>
-      <td>${escapeHtml(product.originalStyleNo)}</td>
-      <td>${escapeHtml(product.vipStyleNo)}</td>
-      <td>${escapeHtml(product.color)}</td>
-      <td>${escapeHtml(barcode)}</td>
-      <td>${escapeHtml(size)}</td>
-      <td>${product.ageDays ?? "-"} 天<br>${escapeHtml(product.firstListingDate || "")}</td>
-      <td>${escapeHtml(product.displaySalesTier || product.salesTier)}</td>
-      <td>${formatNumber(sizeSales30)} 件<br>${formatMoney(sizeSalesAmount30)}</td>
-      <td>${formatNumber(sizeStock)} 件<br>${sizeTurnoverDays === null ? "无销量" : `${sizeTurnoverDays} 天`}</td>
-      <td>${isBrokenSize ? escapeHtml(size) : "无"}</td>
-      <td class="replenishment">${suggestion ? formatNumber(suggestion.qty30) : "-"}</td>
-      <td class="replenishment">${suggestion ? formatNumber(suggestion.qty60) : "-"}</td>
-      <td class="replenishment">${suggestion ? formatNumber(suggestion.qty90) : "-"}</td>
-      <td>${formatMoney(sizeCostPrice)}</td>
-      <td>${formatMoney(sizeFinalPrice)}</td>
-      <td><div class="tag-list">${issueTags.map(renderTag).join("")}</div></td>
-      <td class="recommendation">${escapeHtml(recommendation)}</td>
+      <td>${image}</td>
+      <td>${escapeHtml(item.category)}</td>
+      <td>${escapeHtml(item.originalStyleNo || item.goodsNo || "")}</td>
+      <td>${escapeHtml(item.vipStyleNo || item.styleNo || "")}</td>
+      <td>${escapeHtml(item.color || "")}</td>
+      <td>${escapeHtml(item.sku || "")}</td>
+      <td>${escapeHtml(item.size || "")}</td>
+      <td>${formatAge(item)}</td>
+      <td>${escapeHtml(item.displaySalesTier || item.salesTier || "待判断")}</td>
+      <td>${formatOptionalNumber(item.sales30)} 件<br>${formatMoney(item.salesAmount30)}</td>
+      <td>${formatNumber(item.availableStock)} 件<br>${formatSellableDays(item.sellableDays)}</td>
+      <td>${escapeHtml(item.brokenSize || "无")}</td>
+      <td class="replenishment">${formatReplenishment(item.replenishment?.qty30)}</td>
+      <td class="replenishment">${formatReplenishment(item.replenishment?.qty60)}</td>
+      <td class="replenishment">${formatReplenishment(item.replenishment?.qty90)}</td>
+      <td>${formatMoney(item.costPrice)}</td>
+      <td>${formatMoney(item.retailPrice)}</td>
+      <td><div class="tag-list">${item.issueTags.map((tag) => `<span class="tag ${tagClass(tag)}">${escapeHtml(tag)}</span>`).join("") || `<span class="tag">正常</span>`}</div></td>
+      <td class="recommendation">${escapeHtml(item.adviceText)}</td>
     </tr>
   `;
 }
 
-function buildSizeIssueTags(product, sku) {
-  const isNewProduct = (product.displaySalesTier || product.salesTier) === "新品";
-  const tags = [product.displaySalesTier || product.salesTier];
-  if (product.issueTags.includes("new_observation")) tags.push("new_observation");
-  if (sku.isBroken) tags.push("当前尺码断码");
-  if (sku.suggestion) tags.push("建议补货");
-  if (!isNewProduct && sku.turnoverDays !== null && sku.turnoverDays < 30) tags.push("周转小于30天");
-  if (!isNewProduct && sku.turnoverDays !== null && sku.turnoverDays > 90) tags.push("库存消化慢");
-  if (!isNewProduct && !sku.sales30) tags.push("近30天无销量");
-  if (product.issueTags.includes("low_price")) tags.push("low_price");
-  if (product.issueTags.includes("long_age")) tags.push("long_age");
-  return [...new Set(tags.filter(Boolean))];
+function filterItems(items) {
+  return items.filter((item) => {
+    if (state.keyword) {
+      const matchedKeyword = [
+        item.productId,
+        item.productName,
+        item.goodsNo,
+        item.originalStyleNo,
+        item.vipStyleNo,
+        item.styleNo,
+        item.color,
+        item.sku,
+        item.size,
+        item.category,
+        item.displaySalesTier,
+        item.issueTags.join(" "),
+        item.adviceText
+      ]
+      .join(" ")
+      .toLowerCase()
+      .includes(state.keyword);
+      if (!matchedKeyword) return false;
+    }
+    if (state.combo && !matchesCombo(item, state.combo)) return false;
+    if (state.issue && !matchesIssue(item, state.issue)) return false;
+    return true;
+  });
 }
 
-function buildSizeRecommendation(product, sku) {
-  if (!sku.size) {
-    return product.recommendation;
-  }
-
-  const profitHint = product.issueTags.includes("low_price") ? "；价格低于底线，补货前先检查利润空间" : "";
-  const isNewProduct = (product.displaySalesTier || product.salesTier) === "新品";
-
-  if (product.issueTags.includes("slow_sale")) {
-    if (sku.isBroken) {
-      return "当前尺码断码，但属于滞销款，不建议补货；优先清库存、组合促销或调整价格";
-    }
-    if (!sku.sales30 || sku.turnoverDays === null || sku.turnoverDays > 90) {
-      return "当前尺码库存消化慢，优先清库存、组合促销或调整价格";
-    }
-    return "滞销款不建议补货，保持观察";
-  }
-
-  if (isNewProduct && !sku.suggestion) {
-    if (product.issueTags.includes("new_observation")) {
-      return "新品观察期，暂不按滞销处理，先看曝光、点击和首批销量";
-    }
-    return "新品保护期，暂不按滞销处理，持续观察近7天销量和库存结构";
-  }
-
-  if (sku.suggestion) {
-    const reason = sku.isBroken ? "当前尺码已断码" : "当前尺码周转小于30天";
-    return `${reason}，按30/60/90天建议补货${profitHint}`;
-  }
-
-  if (sku.isBroken) {
-    return `当前尺码断码，但近30天销量未达到核心尺码补货线，先观察或少量试补${profitHint}`;
-  }
-
-  if (!sku.sales30) {
-    return "当前尺码近30天无销量，暂不补货";
-  }
-
-  if (sku.turnoverDays !== null && sku.turnoverDays > 90) {
-    return "当前尺码库存消化慢，优先清库存或调整促销节奏";
-  }
-
-  return "当前尺码库存暂可观察";
+function matchesCombo(item, combo) {
+  const isLongAge = item.tagKeys.includes("long_age");
+  const isBroken = item.tagKeys.includes("broken_size");
+  const isSlow = item.tagKeys.includes("slow_sale") || item.displaySalesTier === "滞销款";
+  const isNormal = item.displaySalesTier === "平销款";
+  const isHot = item.displaySalesTier === "畅销款";
+  if (combo === "long_broken_slow") return isLongAge && isBroken && isSlow;
+  if (combo === "long_broken_normal") return isLongAge && isBroken && isNormal;
+  if (combo === "hot_broken") return isHot && isBroken;
+  return true;
 }
 
-function renderTag(tag) {
-  const label = issueLabels[tag] ?? tag;
-  const cls = tag === "low_price" || tag === "turnover_pressure" || tag === "库存消化慢" ? "warn" : tag === "broken_size" || tag === "当前尺码断码" ? "danger" : "";
-  return `<span class="tag ${cls}">${label}</span>`;
+function matchesIssue(item, issue) {
+  if (issue === "hot_sale") return item.tagKeys.includes("hot_sale");
+  if (issue === "broken_size") return item.tagKeys.includes("broken_size");
+  if (issue === "long_age") return item.tagKeys.includes("long_age");
+  if (issue === "slow_sale") return item.tagKeys.includes("slow_sale") || item.displaySalesTier === "滞销款";
+  if (issue === "normal_sale") return item.displaySalesTier === "平销款";
+  if (issue === "new_product") return item.tagKeys.includes("new_product");
+  if (issue === "low_price") return item.tagKeys.includes("low_price");
+  if (issue === "turnover_pressure") return item.tagKeys.includes("turnover_pressure");
+  return true;
 }
 
-function renderPager(payload) {
-  const pageCount = Math.max(1, Math.ceil(payload.total / payload.pageSize));
+function renderPager(total, pageCount) {
   return `
     <div class="pager">
-      <span>第 ${payload.page} / ${pageCount} 页，共 ${payload.total} 条</span>
-      <button id="prevPage" type="button" ${payload.page <= 1 ? "disabled" : ""}>上一页</button>
-      <button id="nextPage" type="button" ${payload.page >= pageCount ? "disabled" : ""}>下一页</button>
+      <span>第 ${state.page} / ${pageCount} 页，共 ${formatNumber(total)} 条</span>
+      <button id="prevPage" type="button" ${state.page <= 1 ? "disabled" : ""}>上一页</button>
+      <button id="nextPage" type="button" ${state.page >= pageCount ? "disabled" : ""}>下一页</button>
     </div>
   `;
 }
@@ -421,65 +367,88 @@ function renderPager(payload) {
 function bindPager() {
   document.querySelector("#prevPage")?.addEventListener("click", () => {
     state.page -= 1;
-    loadCurrentView();
+    renderCurrentView();
   });
   document.querySelector("#nextPage")?.addEventListener("click", () => {
     state.page += 1;
-    loadCurrentView();
+    renderCurrentView();
   });
 }
 
-function toggleSlowSaleRule() {
-  const shouldOpen = slowSaleRulePanel.classList.contains("hidden");
-  slowSaleRulePanel.classList.toggle("hidden", !shouldOpen);
-  ruleTrigger.setAttribute("aria-expanded", String(shouldOpen));
+function renderEmpty(message = "上传表格后自动解析并展示分析结果") {
+  dashboard.innerHTML = "";
+  validationPanel.innerHTML = "";
+  warningPanel.innerHTML = "";
+  categoryPanel.innerHTML = "";
+  viewContent.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
 }
 
-function closeSlowSaleRule() {
-  slowSaleRulePanel.classList.add("hidden");
-  ruleTrigger.setAttribute("aria-expanded", "false");
+function enableExport() {
+  exportButton.classList.remove("disabled");
+  exportButton.setAttribute("aria-disabled", "false");
 }
 
-function updateFilterLabels() {
-  const stats = state.filterStats;
-  if (!stats) return;
-
-  comboSelect.innerHTML = [
-    `<option value="">全部商品 ${formatPercent(stats.total.share)}（${formatNumber(stats.total.count)}）</option>`,
-    ...Object.entries(comboLabels).map(([value, label]) => {
-      const item = stats.combos[value] ?? { count: 0, share: 0 };
-      return `<option value="${value}">${label} ${formatPercent(item.share)}（${formatNumber(item.count)}）</option>`;
-    })
-  ].join("");
-
-  issueSelect.innerHTML = [
-    `<option value="">全部单项问题 ${formatPercent(stats.total.share)}（${formatNumber(stats.total.count)}）</option>`,
-    ...Object.entries(issueLabels).map(([value, label]) => {
-      const item = stats.issues[value] ?? { count: 0, share: 0 };
-      return `<option value="${value}">${label} ${formatPercent(item.share)}（${formatNumber(item.count)}）</option>`;
-    })
-  ].join("");
+function disableExport() {
+  exportButton.classList.add("disabled");
+  exportButton.setAttribute("aria-disabled", "true");
 }
 
 function setStatus(text) {
   jobStatus.textContent = text;
 }
 
-function formatNumber(value) {
-  return new Intl.NumberFormat("zh-CN").format(value ?? 0);
+function tagClass(tag) {
+  if (tag.includes("缺货") || tag.includes("滞销")) return "danger";
+  if (tag.includes("预警") || tag.includes("积压") || tag.includes("过")) return "warn";
+  return "";
 }
 
-function formatDashboardValue(value) {
-  if (value === null || value === undefined) return "-";
-  return typeof value === "number" ? formatNumber(value) : escapeHtml(String(value));
+function formatMetric(value, key) {
+  if (value === null || value === undefined) {
+    if (key === "inventoryTurnoverMonths" && isSales30Missing()) return BLOCKED_CALCULATION_TEXT;
+    if (key === "sales30") return "缺少字段";
+    return "无销量";
+  }
+  if (key === "salesAmount30") return formatMoney(value);
+  if (key === "inventoryTurnoverMonths") return formatNumber(value);
+  return formatNumber(value);
+}
+
+function formatOptionalNumber(value) {
+  if (value === null || value === undefined) return "缺少字段";
+  return formatNumber(value);
+}
+
+function formatDailySales(value) {
+  if (value === null || value === undefined) return isSales30Missing() ? BLOCKED_CALCULATION_TEXT : "无销量";
+  return formatNumber(value);
+}
+
+function formatSellableDays(value) {
+  if (value === null || value === undefined) return isSales30Missing() ? BLOCKED_CALCULATION_TEXT : "无销量";
+  return `${formatNumber(value)} 天`;
+}
+
+function formatAge(item) {
+  const days = item.listingAgeDays === null || item.listingAgeDays === undefined ? "-" : `${formatNumber(item.listingAgeDays)} 天`;
+  return `${days}<br>${escapeHtml(item.firstListingDate || "")}`;
+}
+
+function formatReplenishment(value) {
+  if (value === null || value === undefined || Number(value) <= 0) return "-";
+  return formatNumber(value);
+}
+
+function isSales30Missing() {
+  return state.result?.validation?.hasSales30 === false;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value ?? 0);
 }
 
 function formatMoney(value) {
   return `¥${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value ?? 0)}`;
-}
-
-function formatPercent(value) {
-  return `${Math.round((value ?? 0) * 100)}%`;
 }
 
 function escapeHtml(value) {
@@ -490,3 +459,5 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+renderEmpty();

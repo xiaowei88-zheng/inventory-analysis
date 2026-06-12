@@ -5,13 +5,16 @@
   "description": "Local Excel-based product inventory and sales analysis tool.",
   "type": "module",
   "scripts": {
-    "start": "node server/src/app.js",
-    "test": "node --test server/tests/*.test.js",
-    "check": "npm test"
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "start": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "npm run build"
+  },
+  "devDependencies": {
+    "vite": "^7.1.12"
   },
   "dependencies": {
-    "exceljs": "^4.4.0",
-    "express": "^4.19.2",
-    "multer": "^2.1.1"
+    "xlsx": "^0.18.5"
   }
 }

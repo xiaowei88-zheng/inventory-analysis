@@ -10,44 +10,51 @@
     <header class="app-header">
       <div>
         <h1>商品库存分析</h1>
-        <p>上传 Excel 后按款色与尺码识别库存风险、销售表现和补货处理建议。</p>
+        <p>上传 Excel 后在浏览器本地解析、清洗、分析和导出，数据不会上传云端。</p>
       </div>
-      <button id="exportLink" class="export-link disabled" type="button" aria-disabled="true">导出报告</button>
+      <button id="exportButton" class="export-link disabled" type="button" aria-disabled="true">导出分析结果</button>
     </header>
 
     <main>
       <section class="upload-band">
-        <form id="uploadForm" class="upload-form">
+        <div class="upload-form">
           <button id="fileButton" class="file-picker" type="button">选择 XLSX 文件</button>
           <input id="fileInput" class="file-input" type="file" name="file" accept=".xlsx" />
-          <button type="submit">开始分析</button>
           <span id="fileName" class="file-name">未选择文件</span>
-        </form>
-        <div id="jobStatus" class="job-status">等待上传</div>
+        </div>
+        <div id="jobStatus" class="job-status">选择文件后自动本地解析</div>
       </section>
 
       <section id="dashboard" class="metrics-grid" aria-live="polite"></section>
 
+      <section id="validationPanel" class="panel"></section>
+
+      <section class="summary-layout">
+        <div id="warningPanel" class="panel"></div>
+        <div id="categoryPanel" class="panel"></div>
+      </section>
+
       <section class="workspace">
         <nav class="tabs" aria-label="分析视图">
-          <button class="tab active" data-view="analysis">分析结果</button>
+          <button class="tab active" type="button">商品库存诊断</button>
         </nav>
 
         <div id="filters" class="filters">
-          <input id="keywordInput" type="search" placeholder="搜索分类、款号、颜色、建议" />
+          <input id="keywordInput" type="search" placeholder="搜索分类、款号、颜色、条形码、建议" />
           <select id="comboSelect">
-            <option value="">全部商品</option>
+            <option value="">全部商品范围</option>
             <option value="long_broken_slow">长售龄 + 断码 + 滞销款</option>
             <option value="long_broken_normal">长售龄 + 断码 + 平销款</option>
             <option value="hot_broken">畅销款 + 断码</option>
           </select>
           <select id="issueSelect">
-            <option value="">全部单项问题</option>
+            <option value="">全部问题</option>
             <option value="hot_sale">畅销款</option>
             <option value="broken_size">断码</option>
             <option value="long_age">长售龄</option>
             <option value="slow_sale">滞销款</option>
             <option value="normal_sale">平销款</option>
+            <option value="new_product">新品</option>
             <option value="low_price">低价预警</option>
             <option value="turnover_pressure">库存压力</option>
           </select>
@@ -67,7 +74,7 @@
         </div>
 
         <div id="viewContent" class="view-content">
-          <div class="empty-state">上传表格后显示分析结果</div>
+          <div class="empty-state">上传表格后自动解析并展示分析结果</div>
         </div>
       </section>
     </main>
